@@ -13,6 +13,9 @@ typedef enum Directions Direction;
 
 /* student-implemented functions for the road intersection problem */
 
+void printD(Direction o, Direction d);
+bool isRightTurn(Direction origin, Direction destination);
+bool conflict(Direction o1, Direction d1, Direction o2, Direction d2);
 void intersection_sync_init(void);
 void intersection_sync_cleanup(void);
 void intersection_before_entry(Direction origin, Direction destination);
