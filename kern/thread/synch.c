@@ -180,6 +180,7 @@ void
 lock_destroy(struct lock *lock)
 {
         KASSERT(lock != NULL);
+        KASSERT(lock->wchan != NULL);
 
         // add stuff here as needed
         spinlock_cleanup(&lock->spinlock);
@@ -210,8 +211,8 @@ void
 lock_release(struct lock *lock)
 {
         // Write this
-        spinlock_acquire(&lock->spinlock);
         KASSERT(lock_do_i_hold(lock));
+        spinlock_acquire(&lock->spinlock);
         lock->holder = NULL;
         wchan_wakeone(lock->wchan);
         spinlock_release(&lock->spinlock);
@@ -261,6 +262,7 @@ void
 cv_destroy(struct cv *cv)
 {
         KASSERT(cv != NULL);
+        KASSERT(cv->wchan != NULL);
 
         // add stuff here as needed
         wchan_destroy(cv->wchan);
@@ -272,7 +274,6 @@ cv_destroy(struct cv *cv)
 void
 cv_wait(struct cv *cv, struct lock *lock)
 {
-        // Write this
         KASSERT(lock->holder == curthread);
         wchan_lock(cv->wchan);
         lock_release(lock);
@@ -283,7 +284,6 @@ cv_wait(struct cv *cv, struct lock *lock)
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
-        // Write this
         KASSERT(lock->holder == curthread);
         wchan_wakeone(cv->wchan);
 }
@@ -291,7 +291,6 @@ cv_signal(struct cv *cv, struct lock *lock)
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
-	      // Write this
         KASSERT(lock->holder == curthread);
         wchan_wakeall(cv->wchan);
 }

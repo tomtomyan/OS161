@@ -5,7 +5,6 @@
 #include <opt-A1.h>
 #include <array.h>
 
-
 /* 
  * This simple default synchronization mechanism allows only vehicle at a time
  * into the intersection.   The intersectionSem is used as a a lock.
@@ -24,47 +23,19 @@
  * replace this with declarations of any synchronization and other variables you need here
  */
 static struct cv *intersectionCv;
+static struct cv *intersectionEmpty;
+
 static struct lock *intersectionLock;
 
 static struct array *origins;
 static struct array *destinations;
 
-static int intersectionNum;
+static Direction *N;
+static Direction *W;
+static Direction *S;
+static Direction *E;
 
-void
-printD(Direction o, Direction d) {
-  switch (o)
-    {
-    case north:
-      kprintf("North");
-      break;
-    case east:
-      kprintf("East");
-      break;
-    case south:
-      kprintf("South");
-      break;
-    case west:
-      kprintf("West");
-      break;
-    }
-  kprintf(" to ");
-  switch (d)
-    {
-    case north:
-      kprintf("North");
-      break;
-    case east:
-      kprintf("East");
-      break;
-    case south:
-      kprintf("South");
-      break;
-    case west:
-      kprintf("West");
-      break;
-    }
-}    
+static int numWaiting;
 
 /* 
  * The simulation driver will call this function once before starting
@@ -78,6 +49,11 @@ intersection_sync_init(void)
 {
   intersectionCv = cv_create("intersectionCv");
   if (intersectionCv == NULL) {
+    panic("could not create intersection condition variable");
+  }
+
+  intersectionEmpty = cv_create("intersectionEmpty");
+  if (intersectionEmpty == NULL) {
     panic("could not create intersection condition variable");
   }
 
@@ -96,13 +72,17 @@ intersection_sync_init(void)
     panic("could not create destinations array");
   }
 
-  array_init(origins);
-  array_init(destinations);
+  N = kmalloc(sizeof(*N));
+  W = kmalloc(sizeof(*W));
+  S = kmalloc(sizeof(*S));
+  E = kmalloc(sizeof(*E));
 
-  array_setsize(origins, 10);
-  array_setsize(destinations, 10);
+  *N = north;
+  *W = west;
+  *S = south;
+  *E = east;
 
-  intersectionNum = 0;
+  numWaiting = 0;
 
   return;
 }
@@ -117,26 +97,38 @@ intersection_sync_init(void)
 void
 intersection_sync_cleanup(void)
 {
-  /* replace this default implementation with your own implementation */
   KASSERT(intersectionCv != NULL);
+  KASSERT(intersectionEmpty != NULL);
   KASSERT(intersectionLock != NULL);
   KASSERT(origins != NULL);
   KASSERT(destinations != NULL);
 
   cv_destroy(intersectionCv);
-  lock_destroy(intersectionLock);
+  cv_destroy(intersectionEmpty);
 
-  array_cleanup(origins);
-  array_cleanup(destinations);
+  lock_destroy(intersectionLock);
 
   array_destroy(origins);
   array_destroy(destinations);
+
+  kfree(N);
+  kfree(W);
+  kfree(S);
+  kfree(E);
+}
+
+static Direction* dirPtr(Direction d) {
+  if (d == north) return N;
+  if (d == west) return W;
+  if (d == south) return S;
+  if (d == east) return E;
+  return NULL;
 }
 
 /*
  * Checks if it is a right turn
  */
-bool isRightTurn(Direction origin, Direction destination) {
+static bool isRightTurn(Direction origin, Direction destination) {
   if (origin == north && destination == west) return true;
   if (origin == west && destination == south) return true;
   if (origin == south && destination == east) return true;
@@ -147,7 +139,7 @@ bool isRightTurn(Direction origin, Direction destination) {
 /*
  * Checks if there's a conflict
  */
-bool conflict(Direction o1, Direction d1, Direction o2, Direction d2) {
+static bool conflict(Direction o1, Direction d1, Direction o2, Direction d2) {
   if (o1 == o2) return false;
   if (o1 == d2 && o2 == d1) return false;
   if (d1 != d2 && (isRightTurn(o1, d1) || isRightTurn(o2, d2))) return false;
@@ -166,50 +158,40 @@ bool conflict(Direction o1, Direction d1, Direction o2, Direction d2) {
  *
  * return value: none
  */
-
 void
 intersection_before_entry(Direction origin, Direction destination) 
 {
-
   lock_acquire(intersectionLock);
-  
-  for (int i = 0; i < intersectionNum; i++) {
-    //kprintf("Checking conflict\n");
+
+  // Wait for waiting cars to finish first
+  if (numWaiting > 0) {
+    cv_wait(intersectionEmpty, intersectionLock);
+  }
+
+  for (size_t i = 0; i < array_num(origins); i++) {
     Direction o = *(Direction *) array_get(origins, i);
     Direction d = *(Direction *) array_get(destinations, i);
 
     if (conflict(origin, destination, o, d)) {
-      //kprintf("Conflict found, waiting...\n");
+      numWaiting++;
       cv_wait(intersectionCv, intersectionLock);
-      //kprintf("Woken up\n");
+      numWaiting--;
       i = -1;
     }
   }
 
   // NO CONFLICT -- SUCCESSFUL
-  //kprintf("No conflict found\n");
-  
-  //kprintf("Entering intersection from ");
-  //printD(origin, destination);
-  //kprintf(", number of cars in intersection: %d\n", intersectionNum);
 
-  //unsigned *ret;
-  Direction *o = kmalloc(sizeof(*o));
-  Direction *d = kmalloc(sizeof(*d));
-  *o = origin;
-  *d = destination;
+  unsigned ret;
+  array_add(origins, dirPtr(origin), &ret);
+  array_add(destinations, dirPtr(destination), &ret);
 
-  if ((int) array_num(origins) <= intersectionNum) {
-    array_setsize(origins, 1 + array_num(origins) * 2);
-    array_setsize(destinations, 1 + array_num(destinations) * 2);
+  // If no cars are waiting, allow old cars to enter
+  if (numWaiting == 0) {
+    cv_broadcast(intersectionEmpty, intersectionLock);
   }
-    
-  array_set(origins, intersectionNum, o);
-  array_set(destinations, intersectionNum, d);
-  intersectionNum++;
 
   lock_release(intersectionLock);
-
 }
 
 
@@ -223,32 +205,20 @@ intersection_before_entry(Direction origin, Direction destination)
  *
  * return value: none
  */
-
 void
 intersection_after_exit(Direction origin, Direction destination) 
 {
-
   bool success = false;
 
   lock_acquire(intersectionLock);
-  
-  //kprintf("Exiting intersection from ");
-  //printD(origin, destination);
 
-  for (int i = 0; i < intersectionNum; i++) {
+  for (size_t i = 0; i < array_num(origins); i++) {
     Direction o = *(Direction *) array_get(origins, i);
     Direction d = *(Direction *) array_get(destinations, i);
-    //printD(o, d);
 
     if (o == origin && d == destination) {
-      intersectionNum--;
-      kfree(array_get(origins, i));
-      kfree(array_get(destinations, i));
       array_remove(origins, i);
       array_remove(destinations, i);
-      //kprintf("Exit successful from ");
-      //printD(origin, destination);
-      //kprintf(", number of cars in intersection: %d\n", intersectionNum);
       success = true;
       break;
     }
@@ -257,5 +227,4 @@ intersection_after_exit(Direction origin, Direction destination)
 
   cv_broadcast(intersectionCv, intersectionLock);
   lock_release(intersectionLock);
-
 }
