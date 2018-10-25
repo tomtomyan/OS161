@@ -50,6 +50,7 @@
 #include <vfs.h>
 #include <synch.h>
 #include <kern/fcntl.h>  
+#include <limits.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -69,7 +70,8 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
-
+static volatile pid_t pid_count;
+struct lock *pid_lock;
 
 /*
  * Create a proc structure.
@@ -208,6 +210,12 @@ proc_bootstrap(void)
     panic("could not create no_proc_sem semaphore\n");
   }
 #endif // UW 
+
+  pid_count = PID_MIN;
+  pid_lock = lock_create("pidlock");
+  if (pid_lock == NULL) {
+    panic("could not create pid_lock\n");
+  }
 }
 
 /*
@@ -270,6 +278,28 @@ proc_create_runprogram(const char *name)
 	proc_count++;
 	V(proc_count_mutex);
 #endif // UW
+
+  lock_acquire(pid_lock);
+  proc->pid = pid_count;
+  pid_count++;
+  lock_release(pid_lock);
+
+  proc->waitcv = cv_create(proc->p_name);
+  if (proc->waitcv == NULL) {
+    panic("could not create waitcv\n");
+  }
+  proc->waitlock = lock_create(proc->p_name);
+  if (proc->waitlock == NULL) {
+    panic("could not create waitlock");
+  }
+  proc->children = array_create();
+  if (proc->children == NULL) {
+    panic("could not create proc children array");
+  }
+  proc->cexitcodes = array_create();
+  if (proc->cexitcodes == NULL) {
+    panic("could not create children exit codes array");
+  }
 
 	return proc;
 }
