@@ -58,6 +58,7 @@ void sys__exit(int exitcode) {
 
   for (size_t i = 0; i < array_num(p->cexitcodes); i++) {
     struct cexitcodes *cec = array_get(p->cexitcodes, i);
+    addPid(cec->pid);
     kfree(cec);
   }
 

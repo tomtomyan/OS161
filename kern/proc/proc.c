@@ -51,6 +51,7 @@
 #include <synch.h>
 #include <kern/fcntl.h>  
 #include <limits.h>
+#include <queue.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -72,6 +73,7 @@ struct semaphore *no_proc_sem;
 
 static volatile pid_t pid_count;
 struct lock *pid_lock;
+struct queue *pidq;
 
 /*
  * Create a proc structure.
@@ -216,6 +218,10 @@ proc_bootstrap(void)
   if (pid_lock == NULL) {
     panic("could not create pid_lock\n");
   }
+  pidq = q_create(10);
+  if (pidq == NULL) {
+    panic("could not create pid queue\n");
+  }
 }
 
 /*
@@ -280,8 +286,16 @@ proc_create_runprogram(const char *name)
 #endif // UW
 
   lock_acquire(pid_lock);
-  proc->pid = pid_count;
-  pid_count++;
+  if (q_peek(pidq) == NULL) {
+    if (pid_count >= PID_MAX) return NULL;
+    proc->pid = pid_count;
+    pid_count++;
+  } else {
+    pid_t *p = q_peek(pidq);
+    proc->pid = *p;
+    kfree(p);
+    q_remhead(pidq);
+  }
   lock_release(pid_lock);
 
   proc->waitcv = cv_create(proc->p_name);
@@ -290,15 +304,15 @@ proc_create_runprogram(const char *name)
   }
   proc->waitlock = lock_create(proc->p_name);
   if (proc->waitlock == NULL) {
-    panic("could not create waitlock");
+    panic("could not create waitlock\n");
   }
   proc->children = array_create();
   if (proc->children == NULL) {
-    panic("could not create proc children array");
+    panic("could not create proc children array\n");
   }
   proc->cexitcodes = array_create();
   if (proc->cexitcodes == NULL) {
-    panic("could not create children exit codes array");
+    panic("could not create children exit codes array\n");
   }
 
 	return proc;
@@ -393,4 +407,12 @@ curproc_setas(struct addrspace *newas)
 	proc->p_addrspace = newas;
 	spinlock_release(&proc->p_lock);
 	return oldas;
+}
+
+void addPid(pid_t pid) {
+  lock_acquire(pid_lock);
+  pid_t *p = kmalloc(sizeof(pid_t));
+  *p = pid;
+  q_addtail(pidq, p);
+  lock_release(pid_lock);
 }

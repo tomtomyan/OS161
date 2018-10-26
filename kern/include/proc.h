@@ -119,5 +119,7 @@ struct addrspace *curproc_getas(void);
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *curproc_setas(struct addrspace *);
 
+/* Add pid to the pid queue */
+void addPid(pid_t pid);
 
 #endif /* _PROC_H_ */
