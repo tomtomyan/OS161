@@ -48,12 +48,18 @@ struct semaphore;
 struct lock;
 struct cv;
 
+struct array *procTable;
+struct lock *lk;
+struct cv *cv;
+
 /*
- * Children exit codes structure.
+ * process structure
  */
-struct cexitcodes {
+struct process {
   pid_t pid;
+  bool exited;
   int exitcode;
+  struct proc *parent;
 };
 
 /*
@@ -82,11 +88,6 @@ struct proc {
 	/* add more material here as needed */
   #if OPT_A2
   pid_t pid;
-  struct proc *parent;
-  struct cv *waitcv;
-  struct lock *waitlock;
-  struct array *children;
-  struct array *cexitcodes;
   #endif /* OPT_A2 */
 };
 

@@ -213,6 +213,7 @@ proc_bootstrap(void)
   }
 #endif // UW 
 
+  procTable = array_create();
   pid_count = PID_MIN;
   pid_lock = lock_create("pidlock");
   if (pid_lock == NULL) {
@@ -222,6 +223,9 @@ proc_bootstrap(void)
   if (pidq == NULL) {
     panic("could not create pid queue\n");
   }
+  lk = lock_create("lk");
+  cv = cv_create("cv");
+
 }
 
 /*
@@ -297,23 +301,6 @@ proc_create_runprogram(const char *name)
     q_remhead(pidq);
   }
   lock_release(pid_lock);
-
-  proc->waitcv = cv_create(proc->p_name);
-  if (proc->waitcv == NULL) {
-    panic("could not create waitcv\n");
-  }
-  proc->waitlock = lock_create(proc->p_name);
-  if (proc->waitlock == NULL) {
-    panic("could not create waitlock\n");
-  }
-  proc->children = array_create();
-  if (proc->children == NULL) {
-    panic("could not create proc children array\n");
-  }
-  proc->cexitcodes = array_create();
-  if (proc->cexitcodes == NULL) {
-    panic("could not create children exit codes array\n");
-  }
 
 	return proc;
 }

@@ -17,50 +17,20 @@ void sys__exit(int exitcode) {
 
   struct addrspace *as;
   struct proc *p = curproc;
-  struct proc *parent = curproc->parent;
 
-  KASSERT(p->children != NULL);
-  KASSERT(p->cexitcodes != NULL);
+  lock_acquire(lk);
 
-  // remove it from children's parents
-  for (size_t i = 0; i < array_num(p->children); i++) {
-    struct proc *child = array_get(p->children, i);
-    KASSERT(child != NULL);
-    child->parent = NULL;
-  }
-
-  // check it's not NULL and not the kernel process
-  if (parent && parent != (struct proc*) 0xdeadbeef) {
-    KASSERT(parent->waitlock != NULL);
-    lock_acquire(parent->waitlock);
-
-    // remove it from parent
-    for (size_t i = 0; i < array_num(parent->children); i++) {
-      struct proc *child = array_get(parent->children, i);
-      KASSERT(child != NULL);
-      if (p->pid == child->pid) {
-        array_remove(parent->children, i);
-        break;
-      }
+  for (size_t i = 0; i < array_num(procTable); i++) {
+    struct process *p = array_get(procTable, i);
+    if (p->pid == curproc->pid) {
+      p->exited = 1;
+      p->exitcode = _MKWAIT_EXIT(exitcode);
     }
-
-    struct cexitcodes *cec = kmalloc(sizeof(struct cexitcodes));
-    cec->pid = p->pid;
-    cec->exitcode = _MKWAIT_EXIT(exitcode);
-
-    unsigned ret;
-    array_add(parent->cexitcodes, cec, &ret);
-
-    cv_broadcast(parent->waitcv, parent->waitlock);
-
-    lock_release(parent->waitlock);
   }
 
-  for (size_t i = 0; i < array_num(p->cexitcodes); i++) {
-    struct cexitcodes *cec = array_get(p->cexitcodes, i);
-    addPid(cec->pid);
-    kfree(cec);
-  }
+  cv_broadcast(cv, lk);
+
+  lock_release(lk);
 
   DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
 
@@ -105,9 +75,9 @@ sys_waitpid(pid_t pid,
 	    int options,
 	    pid_t *retval)
 {
+
   int exitstatus;
   int result;
-  struct proc *p = curproc;
 
   /* this is just a stub implementation that always reports an
      exit status of 0, regardless of the actual exit status of
@@ -122,34 +92,29 @@ sys_waitpid(pid_t pid,
     return(EINVAL);
   }
 
-  // wait if child hasn't exited
-  lock_acquire(p->waitlock);
-  for (size_t i = 0; i < array_num(p->children); i++) {
-    struct proc *child = array_get(p->children, i);
-    if (pid == child->pid) {
-      cv_wait(p->waitcv, p->waitlock);
-      break;
+  lock_acquire(lk);
+
+  for (size_t i = 0; i < array_num(procTable); i++) {
+    struct process *p = array_get(procTable, i);
+    if (p->pid == pid) {
+      if (p->exited) {
+        exitstatus = p->exitcode;
+        kfree(p);
+        array_remove(procTable, i);
+      } else {
+        cv_wait(cv, lk);
+        i = 0;
+      }
     }
   }
 
-  // get the exit status
-  for (size_t i = 0; i < array_num(p->cexitcodes); i++) {
-    struct cexitcodes *cec = array_get(p->cexitcodes, i);
-    if (pid == cec->pid) {
-      exitstatus = cec->exitcode;
-      kfree(cec);
-      array_remove(p->cexitcodes, i);
-      break;
-    }
-  }
-  lock_release(p->waitlock);
+  lock_release(lk);
 
   result = copyout((void *)&exitstatus,status,sizeof(int));
   if (result) {
     return(result);
   }
   *retval = pid;
-
 
   return(0);
 }
@@ -168,9 +133,12 @@ int sys_fork(struct trapframe *tf, pid_t *retval) {
   child->p_addrspace = as;
   spinlock_release(&child->p_lock);
 
-  child->parent = curproc;
-  unsigned temp;
-  array_add(curproc->children, child, &temp);
+  struct process *p = kmalloc(sizeof(struct process));
+  p->pid = child->pid;
+  p->exited = 0;
+  p->parent = curproc;
+  unsigned r;
+  array_add(procTable, p, &r);
 
   struct trapframe *ctf = kmalloc(sizeof(struct trapframe));
   *ctf = *tf;
@@ -181,4 +149,11 @@ int sys_fork(struct trapframe *tf, pid_t *retval) {
 
   return 0;
 }
+
+int sys_execv(userptr_t progname, userptr_t args) {
+  (void)progname;
+  (void)args;
+  return 0;
+}
+
 #endif /* OPT_A2 */
