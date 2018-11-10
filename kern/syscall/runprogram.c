@@ -44,6 +44,7 @@
 #include <vfs.h>
 #include <syscall.h>
 #include <test.h>
+#include <copyinout.h>
 
 /*
  * Load program "progname" and start running it in usermode.
@@ -52,7 +53,7 @@
  * Calls vfs_open on progname and thus may destroy it.
  */
 int
-runprogram(char *progname)
+runprogram(char *progname, char **args, int nargs)
 {
 	struct addrspace *as;
 	struct vnode *v;
@@ -65,12 +66,12 @@ runprogram(char *progname)
 		return result;
 	}
 
-	/* We should be a new process. */
-	KASSERT(curproc_getas() == NULL);
+  /* If execv wasn't called, we should be a new process. */
+  KASSERT(curproc_getas() == NULL);
 
 	/* Create a new address space. */
 	as = as_create();
-	if (as ==NULL) {
+	if (as == NULL) {
 		vfs_close(v);
 		return ENOMEM;
 	}
@@ -97,9 +98,25 @@ runprogram(char *progname)
 		return result;
 	}
 
+  /* Copy arguments into new address space */
+  int argoffset[nargs];
+  int sizeargs = 0;
+  for (int i = 0; i < nargs; i++) {
+    sizeargs += ROUNDUP(strlen(args[i])+1, 8);
+    copyoutstr(args[i], (userptr_t)stackptr - sizeargs, strlen(args[i])+1, NULL);
+    argoffset[i] = sizeargs;
+  }
+  userptr_t argv = (userptr_t)stackptr;
+  argv = argv - sizeargs - 4*(nargs+1);
+
+  for (int i = 0; i < nargs; i++) {
+    ((char**)argv)[i] = (char*)stackptr - argoffset[i];
+  }
+  ((char**)argv)[nargs] = NULL;
+
 	/* Warp to user mode. */
-	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
-			  stackptr, entrypoint);
+	enter_new_process(nargs /*argc*/, argv /*userspace addr of argv*/,
+			  (vaddr_t) argv, entrypoint);
 	
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");
