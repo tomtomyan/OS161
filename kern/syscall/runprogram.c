@@ -45,6 +45,7 @@
 #include <syscall.h>
 #include <test.h>
 #include <copyinout.h>
+#include <limits.h>
 
 /*
  * Load program "progname" and start running it in usermode.
@@ -106,6 +107,10 @@ runprogram(char *progname, char **args, int nargs)
     copyoutstr(args[i], (userptr_t)stackptr - sizeargs, strlen(args[i])+1, NULL);
     argoffset[i] = sizeargs;
   }
+  if (sizeargs > ARG_MAX) {
+    return E2BIG;
+  }
+
   userptr_t argv = (userptr_t)stackptr;
   argv = argv - sizeargs - 4*(nargs+1);
 

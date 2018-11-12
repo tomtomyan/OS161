@@ -15,6 +15,7 @@
 #include <test.h>
 #include <vfs.h>
 #include <kern/fcntl.h>
+#include <limits.h>
 
 void sys__exit(int exitcode) {
 
@@ -229,7 +230,12 @@ int sys_execv(userptr_t progname, userptr_t args) {
     sizeargs += ROUNDUP(strlen(a[i])+1, 8);
     copyoutstr(a[i], (userptr_t)stackptr - sizeargs, strlen(a[i])+1, NULL);
     argoffset[i] = sizeargs;
+    kfree(a[i]);
   }
+  if (sizeargs > ARG_MAX) {
+    return E2BIG;
+  }
+
   userptr_t argv = (userptr_t)stackptr;
   argv = argv - sizeargs - 4*(nargs+1);
 
@@ -248,8 +254,6 @@ int sys_execv(userptr_t progname, userptr_t args) {
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");
 	return EINVAL;
-
-  return 0;
 }
 
 #endif /* OPT_A2 */
