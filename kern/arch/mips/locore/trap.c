@@ -39,6 +39,8 @@
 #include <vm.h>
 #include <mainbus.h>
 #include <syscall.h>
+#include <addrspace.h>
+#include <proc.h>
 
 
 /* in exception.S */
@@ -111,6 +113,16 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 	/*
 	 * You will probably want to change this.
 	 */
+  struct addrspace *as;
+  struct proc *p = curproc;
+
+  as_deactivate();
+  as = curproc_setas(NULL);
+  as_destroy(as);
+
+  proc_remthread(curthread);
+  proc_destroy(p);
+  thread_exit();
 
 	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
 		code, sig, trapcodenames[code], epc, vaddr);
@@ -232,6 +244,7 @@ mips_trap(struct trapframe *tf)
 	switch (code) {
 	case EX_MOD:
 		if (vm_fault(VM_FAULT_READONLY, tf->tf_vaddr)==0) {
+      kill_curthread(tf->tf_epc, EX_MOD, tf->tf_vaddr);
 			goto done;
 		}
 		break;

@@ -59,6 +59,8 @@
 #include <addrspace.h>
 #include <vnode.h>
 #include <elf.h>
+#include <mips/tlb.h>
+#include <spl.h>
 
 /*
  * Load a segment at virtual address VADDR. The segment in memory
@@ -161,6 +163,8 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 	struct addrspace *as;
 
 	as = curproc_getas();
+
+  as->load_elf_completed = false;
 
 	/*
 	 * Read the executable header from offset 0 in the file.
@@ -295,6 +299,15 @@ load_elf(struct vnode *v, vaddr_t *entrypoint)
 			return result;
 		}
 	}
+
+  int spl = splhigh();
+
+  as->load_elf_completed = true;
+  // flush TLB
+  for (int i = 0; i < NUM_TLB; i++) {
+    tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+  }
+  splx(spl);
 
 	result = as_complete_load(as);
 	if (result) {
