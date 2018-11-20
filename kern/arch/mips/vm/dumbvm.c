@@ -51,44 +51,121 @@
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 
+int *coremap_count;
+paddr_t *coremap_location;
+int num_pages;
+paddr_t firstpaddr, lastpaddr;
+bool bootstrapped = false;
+
 void
 vm_bootstrap(void)
 {
-	/* Do nothing. */
+  KASSERT(!bootstrapped);
+
+  ram_getsize(&firstpaddr, &lastpaddr);
+  num_pages = (lastpaddr - firstpaddr) / PAGE_SIZE;
+
+  kprintf("firstpaddr: 0x%x, lastpaddr: 0x%x\n", firstpaddr, lastpaddr);
+  kprintf("Number of pages is: %d\n", num_pages);
+
+  coremap_count = (int *)PADDR_TO_KVADDR(firstpaddr);
+  coremap_location = (paddr_t *) coremap_count + num_pages;
+  //coremap = (int *) firstpaddr;
+  //location = (vaddr_t *) coremap + 4*num_pages;
+  kprintf("coremap_count: %x, coremap_location: 0x%x\n", (vaddr_t) coremap_count, (paddr_t) coremap_location);
+  coremap_count[0] = 1;
+  coremap_location[0] = (vaddr_t)coremap_count;
+
+  for (int i = 1; i < num_pages; i++) {
+    coremap_count[i] = 0; // initialize coremap to be available
+    coremap_location[i] = firstpaddr + i*PAGE_SIZE;
+  }
+  //kprintf("%x\n", (int)&coremap_location[num_pages-1]);
+  //kprintf("page 1 location: %x\n", coremap_location[1]);
+  //kprintf("page 2 location: %x\n", coremap_location[2]);
+  //kprintf("last page location: %x\n", coremap_location[num_pages-1]);
+
+  bootstrapped = true;
 }
 
 static
 paddr_t
-getppages(unsigned long npages)
+getppages(int npages)
 {
-	paddr_t addr;
+  if (!bootstrapped) {
+    paddr_t addr;
 
-	spinlock_acquire(&stealmem_lock);
+    spinlock_acquire(&stealmem_lock);
 
-	addr = ram_stealmem(npages);
-	
+    addr = ram_stealmem(npages);
+
+    spinlock_release(&stealmem_lock);
+
+    return addr;
+  }
+
+  kprintf("attempting to allocate %d pages\n", npages);
+
+  spinlock_acquire(&stealmem_lock);
+
+  int page = 0;
+
+  for (int i = 1; i < num_pages - npages; i++) {
+    if (coremap_count[i] == 0) {
+      kprintf("found page %d\n", i);
+      page = i;
+      coremap_count[i] = npages;
+      for (int j = i+1; j < i+npages; j++) {
+        coremap_count[j] = -1;
+      }
+      break;
+    }
+  }
+  KASSERT(page != 0);
+
+  kprintf("returning location: 0x%x\n", coremap_location[page]);
 	spinlock_release(&stealmem_lock);
-	return addr;
+
+  return coremap_location[page];
 }
 
 /* Allocate/free some kernel-space virtual pages */
 vaddr_t 
 alloc_kpages(int npages)
 {
-	paddr_t pa;
-	pa = getppages(npages);
-	if (pa==0) {
-		return 0;
-	}
-	return PADDR_TO_KVADDR(pa);
+  paddr_t pa;
+  pa = getppages(npages);
+  if (pa==0) {
+    return 0;
+  }
+
+  return PADDR_TO_KVADDR(pa);
 }
 
 void 
 free_kpages(vaddr_t addr)
 {
-	/* nothing - leak the memory. */
+  kprintf("attempting to free pages at address 0x%x\n", addr);
 
-	(void)addr;
+  spinlock_acquire(&stealmem_lock);
+
+  int page = 0;
+  int npages = 0;
+
+  for (int i = 1; i < num_pages; i++) {
+    if (PADDR_TO_KVADDR(coremap_location[i]) == addr) {
+      page = i;
+      npages = coremap_count[i];
+      break;
+    }
+  }
+  KASSERT(page != 0);
+
+  for (int i = page; i < page + npages; i++) {
+    coremap_count[i] = 0;
+  }
+
+	spinlock_release(&stealmem_lock);
 }
 
 void
@@ -232,6 +309,7 @@ as_create(void)
 	as->as_pbase2 = 0;
 	as->as_npages2 = 0;
 	as->as_stackpbase = 0;
+  as->load_elf_completed = false;
 
 	return as;
 }
@@ -239,6 +317,9 @@ as_create(void)
 void
 as_destroy(struct addrspace *as)
 {
+  free_kpages(PADDR_TO_KVADDR(as->as_pbase1));
+  free_kpages(PADDR_TO_KVADDR(as->as_pbase2));
+  free_kpages(PADDR_TO_KVADDR(as->as_stackpbase));
 	kfree(as);
 }
 

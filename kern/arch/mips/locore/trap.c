@@ -41,7 +41,8 @@
 #include <syscall.h>
 #include <addrspace.h>
 #include <proc.h>
-
+#include <synch.h>
+#include <kern/wait.h>
 
 /* in exception.S */
 extern void asm_usermode(struct trapframe *tf);
@@ -113,6 +114,18 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 	/*
 	 * You will probably want to change this.
 	 */
+  lock_acquire(lk);
+
+  for (size_t i = 0; i < array_num(procTable); i++) {
+    struct process *p = array_get(procTable, i);
+    if (p->pid == curproc->pid) {
+      p->exited = 1;
+      p->exitcode = _MKWAIT_EXIT(code);
+    }
+  }
+
+  cv_broadcast(cv, lk);
+
   struct addrspace *as;
   struct proc *p = curproc;
 
