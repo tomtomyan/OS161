@@ -39,10 +39,6 @@
 #include <vm.h>
 #include <mainbus.h>
 #include <syscall.h>
-#include <addrspace.h>
-#include <proc.h>
-#include <synch.h>
-#include <kern/wait.h>
 
 /* in exception.S */
 extern void asm_usermode(struct trapframe *tf);
@@ -114,28 +110,7 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 	/*
 	 * You will probably want to change this.
 	 */
-  lock_acquire(lk);
-
-  for (size_t i = 0; i < array_num(procTable); i++) {
-    struct process *p = array_get(procTable, i);
-    if (p->pid == curproc->pid) {
-      p->exited = 1;
-      p->exitcode = _MKWAIT_EXIT(code);
-    }
-  }
-
-  cv_broadcast(cv, lk);
-
-  struct addrspace *as;
-  struct proc *p = curproc;
-
-  as_deactivate();
-  as = curproc_setas(NULL);
-  as_destroy(as);
-
-  proc_remthread(curthread);
-  proc_destroy(p);
-  thread_exit();
+  sys__exit(sig);
 
 	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
 		code, sig, trapcodenames[code], epc, vaddr);
