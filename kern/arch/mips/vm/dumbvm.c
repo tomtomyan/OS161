@@ -56,6 +56,7 @@ paddr_t *coremap_location;
 int num_pages;
 paddr_t firstpaddr, lastpaddr;
 bool bootstrapped = false;
+int start_page;
 
 void
 vm_bootstrap(void)
@@ -71,16 +72,20 @@ vm_bootstrap(void)
 
   coremap_count = (int *)PADDR_TO_KVADDR(firstpaddr);
   coremap_location = (paddr_t *) coremap_count + num_pages;
+
+  int coremap_size = num_pages * sizeof(int *) * 2;
+  start_page = ROUNDUP(coremap_size, PAGE_SIZE) / PAGE_SIZE;
+
   //kprintf("coremap_count: %x, coremap_location: 0x%x\n", (vaddr_t) coremap_count, (paddr_t) coremap_location);
-  coremap_count[0] = 1;
+  coremap_count[0] = start_page;
   coremap_location[0] = (vaddr_t)coremap_count;
 
-  for (int i = 1; i < num_pages; i++) {
+  for (int i = start_page; i < num_pages; i++) {
     coremap_count[i] = 0; // initialize coremap to be available
     coremap_location[i] = firstpaddr + i*PAGE_SIZE;
   }
   //kprintf("last coremap_location address: 0x%x\n", (int)&coremap_location[num_pages-1]);
-  //kprintf("page 1 location: 0x%x\n", coremap_location[1]);
+  //kprintf("page %d location: 0x%x\n", start_page, coremap_location[start_page]);
   //kprintf("page 2 location: 0x%x\n", coremap_location[2]);
   //kprintf("last page location: 0x%x\n", coremap_location[num_pages-1]);
 
@@ -110,7 +115,7 @@ getppages(int npages)
   paddr_t addr;
   int page = 0;
 
-  for (int i = 1; i < num_pages - npages; i++) {
+  for (int i = start_page; i < num_pages - npages; i++) {
     if (coremap_count[i] == 0) {
       page = i;
       coremap_count[i] = npages;
@@ -152,7 +157,7 @@ free_kpages(vaddr_t addr)
   int page = 0;
   int npages = 0;
 
-  for (int i = 1; i < num_pages; i++) {
+  for (int i = start_page; i < num_pages; i++) {
     if (PADDR_TO_KVADDR(coremap_location[i]) == addr) {
       page = i;
       npages = coremap_count[i];
